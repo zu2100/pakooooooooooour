@@ -2,22 +2,38 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { CourseData, CoursePoint, Theme } from "@/lib/courseData";
+
+export type GizmoMode = "translate" | "scale";
+export type PointSelection = { stageId: string; pointIndex: number } | null;
 
 interface ParkourGameProps {
   course: CourseData;
   onOpenAdmin: () => void;
+  /** 관리자 모드 + 로그인 상태일 때만 true. 켜지면 1인칭 조작이 멈추고 자유 카메라 + 플랫폼 선택/이동/크기조절이 활성화됨 */
+  editMode?: boolean;
+  gizmoMode?: GizmoMode;
+  /** 기즈모로 플랫폼을 옮기거나 크기를 조절할 때마다 호출 (드래그 중 연속 호출) */
+  onPointChange?: (stageId: string, pointIndex: number, patch: Partial<CoursePoint>) => void;
+  /** 3D 화면에서 플랫폼을 클릭해 선택/해제했을 때 호출 */
+  onMeshSelected?: (selection: PointSelection) => void;
 }
 
 export interface ParkourGameHandle {
   /** 관리자 편집 중인 코스 데이터를 즉시 3D 장면에 반영 (플레이어 위치는 유지) */
   previewCourse: (course: CourseData) => void;
+  /** 특정 플랫폼을 3D 화면에서 선택 상태로 만들고 기즈모를 붙임 */
+  selectPoint: (stageId: string, pointIndex: number) => void;
+  /** 선택 해제 */
+  deselectPoint: () => void;
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function ParkourGame(
-  { course, onOpenAdmin },
+  { course, onOpenAdmin, editMode, gizmoMode, onPointChange, onMeshSelected },
   ref
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -27,10 +43,39 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
   const flashRef = useRef<HTMLDivElement>(null);
   const checkpointCountRef = useRef<HTMLDivElement>(null);
   const applyCourseRef = useRef<(course: CourseData) => void>(() => {});
+  const selectPointRef = useRef<(stageId: string, pointIndex: number) => void>(() => {});
+  const deselectPointRef = useRef<() => void>(() => {});
+
+  const editModeRef = useRef(false);
+  const gizmoModeRef = useRef<GizmoMode>("translate");
+  const onPointChangeRef = useRef(onPointChange);
+  const onMeshSelectedRef = useRef(onMeshSelected);
+  const syncEditModeRef = useRef<((enabled: boolean) => void) | null>(null);
+  const syncGizmoModeRef = useRef<((mode: GizmoMode) => void) | null>(null);
 
   useImperativeHandle(ref, () => ({
     previewCourse: (newCourse: CourseData) => applyCourseRef.current(newCourse),
+    selectPoint: (stageId: string, pointIndex: number) => selectPointRef.current(stageId, pointIndex),
+    deselectPoint: () => deselectPointRef.current(),
   }));
+
+  useEffect(() => {
+    onPointChangeRef.current = onPointChange;
+  }, [onPointChange]);
+
+  useEffect(() => {
+    onMeshSelectedRef.current = onMeshSelected;
+  }, [onMeshSelected]);
+
+  useEffect(() => {
+    editModeRef.current = !!editMode;
+    syncEditModeRef.current?.(!!editMode);
+  }, [editMode]);
+
+  useEffect(() => {
+    gizmoModeRef.current = gizmoMode ?? "translate";
+    syncGizmoModeRef.current?.(gizmoModeRef.current);
+  }, [gizmoMode]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -68,6 +113,103 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
       renderer.setSize(window.innerWidth, window.innerHeight);
     };
     window.addEventListener("resize", handleResize);
+
+    // -----------------------------------------------------------------------
+    // 관리자 모드: 자유 카메라(OrbitControls) + 플랫폼 선택/이동/크기조절(TransformControls)
+    // -----------------------------------------------------------------------
+    const orbitControls = new OrbitControls(camera, renderer.domElement);
+    orbitControls.enabled = false;
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.1;
+    orbitControls.maxDistance = 400;
+
+    const transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.enabled = false;
+    transformControls.setSize(0.9);
+    scene.add(transformControls.getHelper());
+
+    transformControls.addEventListener("dragging-changed", (event) => {
+      orbitControls.enabled = !event.value && editModeRef.current;
+    });
+
+    const editableMeshes: { mesh: THREE.Mesh; stageId: string; pointIndex: number }[] = [];
+    let currentSelection: { stageId: string; pointIndex: number } | null = null;
+    const editRaycaster = new THREE.Raycaster();
+
+    function findEditable(mesh: THREE.Object3D | null) {
+      if (!mesh) return undefined;
+      return editableMeshes.find((e) => e.mesh === mesh);
+    }
+
+    function selectMesh(entry: { mesh: THREE.Mesh; stageId: string; pointIndex: number }) {
+      currentSelection = { stageId: entry.stageId, pointIndex: entry.pointIndex };
+      transformControls.attach(entry.mesh);
+      onMeshSelectedRef.current?.(currentSelection);
+    }
+
+    function clearSelection() {
+      currentSelection = null;
+      transformControls.detach();
+      onMeshSelectedRef.current?.(null);
+    }
+
+    selectPointRef.current = (stageId, pointIndex) => {
+      const entry = editableMeshes.find((e) => e.stageId === stageId && e.pointIndex === pointIndex);
+      if (entry) selectMesh(entry);
+    };
+    deselectPointRef.current = () => clearSelection();
+
+    transformControls.addEventListener("objectChange", () => {
+      if (!currentSelection) return;
+      const obj = transformControls.object;
+      if (!obj) return;
+      const patch: Partial<CoursePoint> = { x: obj.position.x, y: obj.position.y, z: obj.position.z };
+      if (gizmoModeRef.current === "scale") {
+        const base = obj.userData as { baseW?: number; baseD?: number };
+        if (base.baseW) patch.w = Math.max(1, Math.round(base.baseW * obj.scale.x * 10) / 10);
+        if (base.baseD) patch.d = Math.max(1, Math.round(base.baseD * obj.scale.z * 10) / 10);
+      }
+      // 드래그 중에도 충돌용 box3을 최신 위치/크기로 갱신 (재빌드 없이도 물리와 어긋나지 않도록)
+      obj.updateMatrixWorld(true);
+      const platformEntry = platforms.find((p) => p.mesh === obj);
+      if (platformEntry) platformEntry.box3.setFromObject(obj);
+      onPointChangeRef.current?.(currentSelection.stageId, currentSelection.pointIndex, patch);
+    });
+
+    const handleEditClick = (e: MouseEvent) => {
+      if (!editModeRef.current || transformControls.dragging) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      editRaycaster.setFromCamera(ndc, camera);
+      const hits = editRaycaster.intersectObjects(editableMeshes.map((e) => e.mesh), false);
+      if (hits.length > 0) {
+        const entry = findEditable(hits[0].object);
+        if (entry) selectMesh(entry);
+      } else {
+        clearSelection();
+      }
+    };
+    renderer.domElement.addEventListener("click", handleEditClick);
+
+    syncEditModeRef.current = (enabled: boolean) => {
+      orbitControls.enabled = enabled;
+      transformControls.enabled = enabled;
+      if (!enabled) {
+        clearSelection();
+        return;
+      }
+      // 편집 모드로 들어갈 때 플레이어가 보던 방향 앞쪽을 자유 카메라의 시점 기준으로 삼음
+      const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw)).multiplyScalar(-1);
+      orbitControls.target.copy(player.position).addScaledVector(forward, 20);
+      orbitControls.update();
+    };
+    syncGizmoModeRef.current = (mode: GizmoMode) => {
+      transformControls.setMode(mode);
+      transformControls.showY = mode === "translate";
+    };
 
     // -----------------------------------------------------------------------
     // 조명
@@ -362,8 +504,10 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
     let lavaLight: THREE.PointLight | null = null;
 
     function buildStage(stage: CourseData["stages"][number]) {
-      stage.points.forEach((p: CoursePoint) => {
-        addPlatform(p.x, p.y, p.z, p.w, 1, p.d, !!(p.checkpoint || p.goal || p.stageClear), stage.theme);
+      stage.points.forEach((p: CoursePoint, pointIndex: number) => {
+        const mesh = addPlatform(p.x, p.y, p.z, p.w, 1, p.d, !!(p.checkpoint || p.goal || p.stageClear), stage.theme);
+        mesh.userData = { stageId: stage.id, pointIndex, baseW: p.w, baseD: p.d };
+        editableMeshes.push({ mesh, stageId: stage.id, pointIndex });
         if (p.checkpoint) {
           const ring = new THREE.Mesh(
             new THREE.TorusGeometry(2, 0.18, 12, 32),
@@ -406,6 +550,8 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
 
     // 코스 데이터를 기반으로 플랫폼/체크포인트/용암지대를 새로 빌드 (관리자 모드 실시간 편집용으로 재호출 가능)
     function applyCourse(newCourse: CourseData) {
+      transformControls.detach();
+      editableMeshes.length = 0;
       for (let i = platforms.length - 1; i >= cityPlatformCount; i--) {
         const entry = platforms[i];
         scene.remove(entry.mesh);
@@ -476,6 +622,15 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
         lavaLight.position.set(-2, lavaSurfaceY + 15, lavaCenterZ);
         scene.add(lavaLight);
       }
+
+      // 테이블 편집 등으로 코스가 재빌드되어도 이전에 선택했던 플랫폼이 있으면 다시 선택 상태로 복원
+      if (currentSelection) {
+        const restored = editableMeshes.find(
+          (e) => e.stageId === currentSelection!.stageId && e.pointIndex === currentSelection!.pointIndex
+        );
+        if (restored) transformControls.attach(restored.mesh);
+        else clearSelection();
+      }
     }
 
     applyCourse(course);
@@ -527,6 +682,10 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
     playerMesh.visible = false;
     scene.add(playerMesh);
 
+    // 마운트 시점의 editMode/gizmoMode prop 값으로 한 번 동기화 (player가 정의된 이후에 호출해야 함)
+    syncEditModeRef.current(editModeRef.current);
+    syncGizmoModeRef.current(gizmoModeRef.current);
+
     // -----------------------------------------------------------------------
     // 입력 처리
     // -----------------------------------------------------------------------
@@ -568,6 +727,7 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
     const MIN_FOV = 20;
     const MAX_FOV = 100;
     const handleWheel = (e: WheelEvent) => {
+      if (editModeRef.current) return; // 편집 모드에서는 OrbitControls의 줌을 사용
       e.preventDefault();
       camera.fov = THREE.MathUtils.clamp(camera.fov + e.deltaY * 0.05, MIN_FOV, MAX_FOV);
       camera.updateProjectionMatrix();
@@ -689,7 +849,9 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
       rafId = requestAnimationFrame(animate);
       const dt = Math.min(clock.getDelta(), 0.05);
 
-      if (pointerLocked) {
+      if (editModeRef.current) {
+        orbitControls.update();
+      } else if (pointerLocked) {
         const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
         const right = new THREE.Vector3(Math.sin(player.yaw + Math.PI / 2), 0, Math.cos(player.yaw + Math.PI / 2));
 
@@ -726,10 +888,12 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
         checkFall();
       }
 
-      camera.position.copy(player.position);
-      camera.rotation.order = "YXZ";
-      camera.rotation.y = player.yaw;
-      camera.rotation.x = player.pitch;
+      if (!editModeRef.current) {
+        camera.position.copy(player.position);
+        camera.rotation.order = "YXZ";
+        camera.rotation.y = player.yaw;
+        camera.rotation.x = player.pitch;
+      }
 
       playerMesh.position.copy(player.position);
       playerMesh.rotation.y = player.yaw;
@@ -762,6 +926,9 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
       document.removeEventListener("mousemove", handleMouseMove);
       renderer.domElement.removeEventListener("wheel", handleWheel);
+      renderer.domElement.removeEventListener("click", handleEditClick);
+      transformControls.dispose();
+      orbitControls.dispose();
       if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       renderer.dispose();
       if (renderer.domElement.parentElement === mountEl) mountEl.removeChild(renderer.domElement);
