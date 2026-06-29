@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+:root {
+  --background: #05060a;
+  --foreground: #e8f0ff;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Malgun Gothic", ui-sans-serif, system-ui, sans-serif;
+}
+
+canvas {
+  display: block;
+}
