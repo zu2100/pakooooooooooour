@@ -197,6 +197,10 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
     syncEditModeRef.current = (enabled: boolean) => {
       orbitControls.enabled = enabled;
       transformControls.enabled = enabled;
+      // 편집 중에는 "클릭하여 시작" 안내창이 캔버스 클릭을 가로채지 않도록 숨기고,
+      // 마우스 커서도 항상 보이게 함 (포인터 락이 걸려있지 않으므로 보통 자동으로 보이지만 명시적으로 보장)
+      blockerEl.style.display = enabled ? "none" : "flex";
+      renderer.domElement.style.cursor = enabled ? "default" : "";
       if (!enabled) {
         clearSelection();
         return;
@@ -710,7 +714,7 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
 
     const handlePointerLockChange = () => {
       pointerLocked = document.pointerLockElement === renderer.domElement;
-      blockerEl.style.display = pointerLocked ? "none" : "flex";
+      blockerEl.style.display = pointerLocked || editModeRef.current ? "none" : "flex";
     };
     document.addEventListener("pointerlockchange", handlePointerLockChange);
 
