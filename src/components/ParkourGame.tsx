@@ -663,6 +663,7 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
     const JUMP_VELOCITY = 10.5;
     const MOVE_SPEED = 9;
     const MAX_JUMPS = 2;
+    const EDIT_MOVE_SPEED = 40; // 관리자 모드 자유 카메라 이동 속도
 
     const startPoint = course.stages[0]?.points[0] ?? { x: 0, y: 0, z: 0 };
     const startPos = new THREE.Vector3(startPoint.x, startPoint.y + 1 + PLAYER_HEIGHT / 2, startPoint.z);
@@ -854,6 +855,25 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
       const dt = Math.min(clock.getDelta(), 0.05);
 
       if (editModeRef.current) {
+        const activeTag = document.activeElement?.tagName;
+        const isTyping = activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT";
+        if (!isTyping) {
+          const editForward = new THREE.Vector3();
+          camera.getWorldDirection(editForward);
+          const editRight = new THREE.Vector3().crossVectors(editForward, camera.up).normalize();
+          const editMove = new THREE.Vector3();
+          if (keys["KeyW"] || keys["ArrowUp"]) editMove.add(editForward);
+          if (keys["KeyS"] || keys["ArrowDown"]) editMove.sub(editForward);
+          if (keys["KeyA"] || keys["ArrowLeft"]) editMove.sub(editRight);
+          if (keys["KeyD"] || keys["ArrowRight"]) editMove.add(editRight);
+          if (keys["Space"]) editMove.y += 1;
+          if (keys["ShiftLeft"] || keys["ShiftRight"]) editMove.y -= 1;
+          if (editMove.lengthSq() > 0) {
+            editMove.normalize().multiplyScalar(EDIT_MOVE_SPEED * dt);
+            camera.position.add(editMove);
+            orbitControls.target.add(editMove);
+          }
+        }
         orbitControls.update();
       } else if (pointerLocked) {
         const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
