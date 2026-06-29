@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import type { CourseData, CoursePoint, Theme } from "@/lib/courseData";
 
@@ -9,15 +9,28 @@ interface ParkourGameProps {
   onOpenAdmin: () => void;
 }
 
+export interface ParkourGameHandle {
+  /** 관리자 편집 중인 코스 데이터를 즉시 3D 장면에 반영 (플레이어 위치는 유지) */
+  previewCourse: (course: CourseData) => void;
+}
+
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
-export default function ParkourGame({ course, onOpenAdmin }: ParkourGameProps) {
+const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function ParkourGame(
+  { course, onOpenAdmin },
+  ref
+) {
   const mountRef = useRef<HTMLDivElement>(null);
   const blockerRef = useRef<HTMLDivElement>(null);
   const checkpointMsgRef = useRef<HTMLDivElement>(null);
   const fallMsgRef = useRef<HTMLDivElement>(null);
   const flashRef = useRef<HTMLDivElement>(null);
   const checkpointCountRef = useRef<HTMLDivElement>(null);
+  const applyCourseRef = useRef<(course: CourseData) => void>(() => {});
+
+  useImperativeHandle(ref, () => ({
+    previewCourse: (newCourse: CourseData) => applyCourseRef.current(newCourse),
+  }));
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -318,15 +331,23 @@ export default function ParkourGame({ course, onOpenAdmin }: ParkourGameProps) {
       position: THREE.Vector3;
       reached: boolean;
     }
-    const checkpoints: CheckpointEntry[] = [];
-    let goalPosition: THREE.Vector3 | null = null;
-
     interface StageClearEntry {
       position: THREE.Vector3;
       message: string;
       shown: boolean;
     }
-    const stageClears: StageClearEntry[] = [];
+
+    // 도시 건물까지의 플랫폼 개수 (코스를 다시 빌드할 때 보존 대상)
+    const cityPlatformCount = platforms.length;
+    let checkpoints: CheckpointEntry[] = [];
+    let goalPosition: THREE.Vector3 | null = null;
+    let stageClears: StageClearEntry[] = [];
+    let courseDecor: THREE.Object3D[] = [];
+    let lavaZoneStartZ = -Infinity;
+    let lavaZoneEndZ = -Infinity;
+    let lavaSurfaceY = 3;
+    let lavaGround: THREE.Mesh | null = null;
+    let lavaLight: THREE.PointLight | null = null;
 
     function buildStage(stage: CourseData["stages"][number]) {
       stage.points.forEach((p: CoursePoint) => {
@@ -339,6 +360,7 @@ export default function ParkourGame({ course, onOpenAdmin }: ParkourGameProps) {
           ring.rotation.x = Math.PI / 2;
           ring.position.set(p.x, p.y + 2.2, p.z);
           scene.add(ring);
+          courseDecor.push(ring);
           checkpoints.push({ mesh: ring, position: new THREE.Vector3(p.x, p.y + 1.5, p.z), reached: false });
         }
         if (p.stageClear) {
@@ -356,62 +378,10 @@ export default function ParkourGame({ course, onOpenAdmin }: ParkourGameProps) {
           );
           flag.position.set(p.x, p.y + 2.5, p.z);
           scene.add(flag);
+          courseDecor.push(flag);
         }
       });
     }
-
-    course.stages.forEach(buildStage);
-    checkpointCountElNonNull.textContent = `체크포인트: 0 / ${checkpoints.length}`;
-
-    // 장식용 작은 플랫폼들 (각 테마 구간에 분산)
-    const allZ = course.stages.flatMap((s) => s.points.map((p) => p.z));
-    const minZ = allZ.length ? Math.min(...allZ) : -10;
-    course.stages.forEach((stage, idx) => {
-      const stageZs = stage.points.map((p) => p.z);
-      const zHigh = Math.max(...stageZs) + (idx === 0 ? 30 : 6);
-      const zLow = Math.min(...stageZs) - 6;
-      const yVals = stage.points.map((p) => p.y);
-      const yLow = Math.min(...yVals) - 5;
-      const yHigh = Math.max(...yVals) + 5;
-      for (let i = 0; i < 18; i++) {
-        const x = rand(-55, 55);
-        const z = rand(zLow, zHigh);
-        const y = rand(yLow, yHigh);
-        if (idx === 0 && Math.abs(x) < 20 && z > zLow && z < zHigh) continue;
-        if (idx > 0 && Math.abs(x) < 18) continue;
-        addPlatform(x, y, z, rand(3, 6), 1, rand(3, 6), false, stage.theme);
-      }
-    });
-
-    // -----------------------------------------------------------------------
-    // 용암 바닥 & 분위기 전환 구간 (lava 테마 스테이지 기준 자동 계산)
-    // -----------------------------------------------------------------------
-    const stageIndexByTheme = course.stages.findIndex((s) => s.theme === "lava");
-    let lavaZoneStartZ = -Infinity;
-    let lavaZoneEndZ = -Infinity;
-    let lavaCenterZ = 0;
-    let lavaSurfaceY = 3;
-    if (stageIndexByTheme >= 0) {
-      const lavaStage = course.stages[stageIndexByTheme];
-      const prevStage = course.stages[stageIndexByTheme - 1];
-      const lavaZs = lavaStage.points.map((p) => p.z);
-      lavaZoneStartZ = prevStage ? Math.max(...prevStage.points.map((p) => p.z)) : Math.max(...lavaZs) + 13;
-      lavaZoneEndZ = Math.min(...lavaZs) - 7;
-      lavaCenterZ = (lavaZoneStartZ + lavaZoneEndZ) / 2;
-      lavaSurfaceY = Math.min(...lavaStage.points.map((p) => p.y)) - 12;
-    }
-
-    const lavaGround = new THREE.Mesh(
-      new THREE.PlaneGeometry(160, Math.max(20, lavaZoneStartZ - lavaZoneEndZ)),
-      new THREE.MeshStandardMaterial({ color: 0xff4400, emissive: 0xff3300, emissiveIntensity: 1.3, roughness: 0.35 })
-    );
-    lavaGround.rotation.x = -Math.PI / 2;
-    lavaGround.position.set(-2, lavaSurfaceY, lavaCenterZ);
-    if (stageIndexByTheme >= 0) scene.add(lavaGround);
-
-    const lavaLight = new THREE.PointLight(0xff5522, 1.4, 140);
-    lavaLight.position.set(-2, lavaSurfaceY + 15, lavaCenterZ);
-    if (stageIndexByTheme >= 0) scene.add(lavaLight);
 
     const COOL_BG = new THREE.Color(0x0a0d14);
     const HOT_BG = new THREE.Color(0x3a0f05);
@@ -422,6 +392,83 @@ export default function ParkourGame({ course, onOpenAdmin }: ParkourGameProps) {
     const COOL_MOON = new THREE.Color(0xaecbff);
     const HOT_MOON = new THREE.Color(0xff7a3d);
 
+    // 코스 데이터를 기반으로 플랫폼/체크포인트/용암지대를 새로 빌드 (관리자 모드 실시간 편집용으로 재호출 가능)
+    function applyCourse(newCourse: CourseData) {
+      for (let i = platforms.length - 1; i >= cityPlatformCount; i--) {
+        const entry = platforms[i];
+        scene.remove(entry.mesh);
+        entry.mesh.geometry.dispose();
+        platforms.splice(i, 1);
+      }
+      courseDecor.forEach((obj) => scene.remove(obj));
+      courseDecor = [];
+      checkpoints = [];
+      stageClears = [];
+      goalPosition = null;
+      if (lavaGround) {
+        scene.remove(lavaGround);
+        lavaGround.geometry.dispose();
+        lavaGround = null;
+      }
+      if (lavaLight) {
+        scene.remove(lavaLight);
+        lavaLight = null;
+      }
+
+      newCourse.stages.forEach(buildStage);
+      checkpointCountElNonNull.textContent = `체크포인트: 0 / ${checkpoints.length}`;
+
+      // 장식용 작은 플랫폼들 (각 테마 구간에 분산)
+      newCourse.stages.forEach((stage, idx) => {
+        const stageZs = stage.points.map((p) => p.z);
+        if (stageZs.length === 0) return;
+        const zHigh = Math.max(...stageZs) + (idx === 0 ? 30 : 6);
+        const zLow = Math.min(...stageZs) - 6;
+        const yVals = stage.points.map((p) => p.y);
+        const yLow = Math.min(...yVals) - 5;
+        const yHigh = Math.max(...yVals) + 5;
+        for (let i = 0; i < 18; i++) {
+          const x = rand(-55, 55);
+          const z = rand(zLow, zHigh);
+          const y = rand(yLow, yHigh);
+          if (idx === 0 && Math.abs(x) < 20 && z > zLow && z < zHigh) continue;
+          if (idx > 0 && Math.abs(x) < 18) continue;
+          addPlatform(x, y, z, rand(3, 6), 1, rand(3, 6), false, stage.theme);
+        }
+      });
+
+      // 용암 바닥 & 분위기 전환 구간 (lava 테마 스테이지 기준 자동 계산)
+      const stageIndexByTheme = newCourse.stages.findIndex((s) => s.theme === "lava");
+      lavaZoneStartZ = -Infinity;
+      lavaZoneEndZ = -Infinity;
+      let lavaCenterZ = 0;
+      lavaSurfaceY = 3;
+      if (stageIndexByTheme >= 0) {
+        const lavaStage = newCourse.stages[stageIndexByTheme];
+        const prevStage = newCourse.stages[stageIndexByTheme - 1];
+        const lavaZs = lavaStage.points.map((p) => p.z);
+        lavaZoneStartZ = prevStage ? Math.max(...prevStage.points.map((p) => p.z)) : Math.max(...lavaZs) + 13;
+        lavaZoneEndZ = Math.min(...lavaZs) - 7;
+        lavaCenterZ = (lavaZoneStartZ + lavaZoneEndZ) / 2;
+        lavaSurfaceY = Math.min(...lavaStage.points.map((p) => p.y)) - 12;
+
+        lavaGround = new THREE.Mesh(
+          new THREE.PlaneGeometry(160, Math.max(20, lavaZoneStartZ - lavaZoneEndZ)),
+          new THREE.MeshStandardMaterial({ color: 0xff4400, emissive: 0xff3300, emissiveIntensity: 1.3, roughness: 0.35 })
+        );
+        lavaGround.rotation.x = -Math.PI / 2;
+        lavaGround.position.set(-2, lavaSurfaceY, lavaCenterZ);
+        scene.add(lavaGround);
+
+        lavaLight = new THREE.PointLight(0xff5522, 1.4, 140);
+        lavaLight.position.set(-2, lavaSurfaceY + 15, lavaCenterZ);
+        scene.add(lavaLight);
+      }
+    }
+
+    applyCourse(course);
+    applyCourseRef.current = applyCourse;
+
     function updateAtmosphere(playerZ: number) {
       const enter = THREE.MathUtils.clamp((lavaZoneStartZ - playerZ) / 40, 0, 1);
       const exit = THREE.MathUtils.clamp(1 - (lavaZoneEndZ - playerZ) / 40, 0, 1);
@@ -431,7 +478,7 @@ export default function ParkourGame({ course, onOpenAdmin }: ParkourGameProps) {
       (scene.fog as THREE.FogExp2).density = 0.007 + hotFactor * 0.006;
       hemi.color.copy(COOL_HEMI).lerp(HOT_HEMI, hotFactor);
       moon.color.copy(COOL_MOON).lerp(HOT_MOON, hotFactor);
-      lavaLight.intensity = 1.0 + hotFactor * 0.8 + Math.sin(performance.now() * 0.004) * 0.15;
+      if (lavaLight) lavaLight.intensity = 1.0 + hotFactor * 0.8 + Math.sin(performance.now() * 0.004) * 0.15;
       rainMat.opacity = 0.55 * (1 - hotFactor);
       return hotFactor;
     }
@@ -708,7 +755,10 @@ export default function ParkourGame({ course, onOpenAdmin }: ParkourGameProps) {
       </div>
 
       <button
-        onClick={onOpenAdmin}
+        onClick={() => {
+          if (document.pointerLockElement) document.exitPointerLock();
+          onOpenAdmin();
+        }}
         className="absolute right-4 top-4 z-20 rounded-md border border-sky-700/60 bg-slate-900/70 px-3 py-1.5 text-xs font-medium text-sky-200 backdrop-blur-sm transition hover:bg-slate-800/80"
       >
         관리자 모드
@@ -754,4 +804,6 @@ export default function ParkourGame({ course, onOpenAdmin }: ParkourGameProps) {
       </div>
     </div>
   );
-}
+});
+
+export default ParkourGame;

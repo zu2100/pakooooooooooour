@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import ParkourGame from "@/components/ParkourGame";
+import { useEffect, useRef, useState } from "react";
+import ParkourGame, { type ParkourGameHandle } from "@/components/ParkourGame";
 import AdminPanel from "@/components/AdminPanel";
 import { DEFAULT_COURSE, type CourseData } from "@/lib/courseData";
 
 export default function GameShell() {
   const [course, setCourse] = useState<CourseData>(DEFAULT_COURSE);
-  const [version, setVersion] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const gameRef = useRef<ParkourGameHandle>(null);
 
   useEffect(() => {
     fetch("/api/course")
@@ -27,14 +27,12 @@ export default function GameShell() {
 
   return (
     <>
-      <ParkourGame key={version} course={course} onOpenAdmin={() => setShowAdmin(true)} />
+      <ParkourGame ref={gameRef} course={course} onOpenAdmin={() => setShowAdmin(true)} />
       {showAdmin && (
         <AdminPanel
           onClose={() => setShowAdmin(false)}
-          onSaved={(saved) => {
-            setCourse(saved);
-            setVersion((v) => v + 1);
-          }}
+          onPreview={(preview) => gameRef.current?.previewCourse(preview)}
+          onSaved={(saved) => setCourse(saved)}
         />
       )}
     </>

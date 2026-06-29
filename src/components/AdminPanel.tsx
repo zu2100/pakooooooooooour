@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CourseData, CoursePoint, Stage, Theme } from "@/lib/courseData";
 
 interface AdminPanelProps {
   onClose: () => void;
   onSaved: (course: CourseData) => void;
+  /** 입력값이 바뀔 때마다 즉시 3D 장면에 반영하기 위한 콜백 */
+  onPreview: (course: CourseData) => void;
 }
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
@@ -16,7 +18,7 @@ const THEME_OPTIONS: { value: Theme; label: string }[] = [
 
 const emptyPoint = (): CoursePoint => ({ x: 0, y: 0, z: 0, w: 5, d: 5 });
 
-export default function AdminPanel({ onClose, onSaved }: AdminPanelProps) {
+export default function AdminPanel({ onClose, onSaved, onPreview }: AdminPanelProps) {
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -27,6 +29,13 @@ export default function AdminPanel({ onClose, onSaved }: AdminPanelProps) {
   const [saveError, setSaveError] = useState("");
   const [saveOk, setSaveOk] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // 입력이 바뀔 때마다 게임 화면에 바로 반영 (저장 전 미리보기)
+  useEffect(() => {
+    if (!authenticated || stages.length === 0) return;
+    onPreview({ stages });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, stages]);
 
   async function handleLogin() {
     setLoggingIn(true);
@@ -120,14 +129,16 @@ export default function AdminPanel({ onClose, onSaved }: AdminPanelProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-sky-800/60 bg-slate-950/95 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+    <div className="fixed right-0 top-0 z-50 flex h-screen w-full max-w-md flex-col overflow-hidden border-l border-sky-800/60 bg-slate-950/95 shadow-2xl backdrop-blur-sm">
+      <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+        <div>
           <h2 className="text-lg font-semibold text-sky-300">관리자 모드 - 맵 에디터</h2>
-          <button onClick={onClose} className="rounded px-2 py-1 text-slate-400 hover:bg-slate-800 hover:text-white">
-            ✕
-          </button>
+          {authenticated && <p className="text-xs text-slate-400">입력하는 즉시 뒤 화면에 반영됩니다</p>}
         </div>
+        <button onClick={onClose} className="rounded px-2 py-1 text-slate-400 hover:bg-slate-800 hover:text-white">
+          ✕
+        </button>
+      </div>
 
         {!authenticated ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10">
@@ -279,7 +290,6 @@ export default function AdminPanel({ onClose, onSaved }: AdminPanelProps) {
             </button>
           </div>
         )}
-      </div>
     </div>
   );
 }
