@@ -122,12 +122,24 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
       }
     }
 
-    for (let i = 0; i < 50; i++) {
+    // 코스 경로 근처에는 건물을 두지 않음 (다음 플랫폼이 건물에 가려지지 않도록)
+    const coursePathPoints = course.stages.flatMap((s) => s.points.map((p) => ({ x: p.x, z: p.z })));
+    const BUILDING_CLEARANCE = 26;
+    function isClearOfCourse(x: number, z: number) {
+      return coursePathPoints.every((p) => Math.hypot(p.x - x, p.z - z) > BUILDING_CLEARANCE);
+    }
+
+    let buildingsPlaced = 0;
+    let buildingAttempts = 0;
+    while (buildingsPlaced < 50 && buildingAttempts < 300) {
+      buildingAttempts++;
       const angle = Math.random() * Math.PI * 2;
       const radius = rand(45, 160);
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
+      if (!isClearOfCourse(x, z)) continue;
       makeBuilding(x, z, rand(8, 18), rand(20, 90), rand(8, 18));
+      buildingsPlaced++;
     }
     scene.add(cityGroup);
 
