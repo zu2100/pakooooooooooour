@@ -447,7 +447,7 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
         const lavaStage = newCourse.stages[stageIndexByTheme];
         const prevStage = newCourse.stages[stageIndexByTheme - 1];
         const lavaZs = lavaStage.points.map((p) => p.z);
-        lavaZoneStartZ = prevStage ? Math.max(...prevStage.points.map((p) => p.z)) : Math.max(...lavaZs) + 13;
+        lavaZoneStartZ = prevStage ? Math.min(...prevStage.points.map((p) => p.z)) : Math.max(...lavaZs) + 13;
         lavaZoneEndZ = Math.min(...lavaZs) - 7;
         lavaCenterZ = (lavaZoneStartZ + lavaZoneEndZ) / 2;
         lavaSurfaceY = Math.min(...lavaStage.points.map((p) => p.y)) - 12;
@@ -551,6 +551,16 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
       player.pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, player.pitch));
     };
     document.addEventListener("mousemove", handleMouseMove);
+
+    // 마우스 휠로 시야 확대/축소 (FOV 조절 방식의 줌)
+    const MIN_FOV = 20;
+    const MAX_FOV = 100;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      camera.fov = THREE.MathUtils.clamp(camera.fov + e.deltaY * 0.05, MIN_FOV, MAX_FOV);
+      camera.updateProjectionMatrix();
+    };
+    renderer.domElement.addEventListener("wheel", handleWheel, { passive: false });
 
     // -----------------------------------------------------------------------
     // 충돌 / 물리
@@ -739,6 +749,7 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
       blockerEl.removeEventListener("click", handleBlockerClick);
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
       document.removeEventListener("mousemove", handleMouseMove);
+      renderer.domElement.removeEventListener("wheel", handleWheel);
       if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       renderer.dispose();
       if (renderer.domElement.parentElement === mountEl) mountEl.removeChild(renderer.domElement);
@@ -750,7 +761,7 @@ const ParkourGame = forwardRef<ParkourGameHandle, ParkourGameProps>(function Par
     <div ref={mountRef} className="relative h-screen w-screen overflow-hidden bg-[#05060a]">
       <div className="pointer-events-none absolute left-4 top-4 z-[5] text-sm leading-relaxed text-sky-100 [text-shadow:0_0_6px_rgba(0,0,0,0.8)]">
         <h1 className="m-0 mb-1.5 text-xl font-semibold tracking-wide text-sky-300">3D 파쿠우우우르</h1>
-        <div>WASD / 방향키 : 이동 &nbsp;/&nbsp; SPACE : 점프(2단 가능) &nbsp;/&nbsp; 마우스 : 시야</div>
+        <div>WASD / 방향키 : 이동 &nbsp;/&nbsp; SPACE : 점프(2단 가능) &nbsp;/&nbsp; 마우스 : 시야 &nbsp;/&nbsp; 휠 : 확대·축소</div>
         <div ref={checkpointCountRef}>체크포인트: 0 / 0</div>
       </div>
 

@@ -11,6 +11,10 @@ const THEMES: Theme[] = ["normal", "lava", "sky"];
 
 const hasBlob = !!process.env.BLOB_READ_WRITE_TOKEN;
 
+// Vercel Blob SDK가 내부적으로 호출하는 fetch까지 Next.js가 캐싱하지 않도록 강제
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+
 async function readCourse(): Promise<CourseData> {
   try {
     if (hasBlob) {
@@ -33,6 +37,7 @@ async function writeCourse(course: CourseData): Promise<void> {
       contentType: "application/json",
       addRandomSuffix: false,
       allowOverwrite: true,
+      cacheControlMaxAge: 60,
     });
     return;
   }
